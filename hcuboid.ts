@@ -4,8 +4,7 @@ import {GameState, Move, Coords, Board2D
   , movesFrom
   , getEndT
   , getNewL
-  , getEnd
-  , getStart
+  , getEnd, getStart, getNewBoards
   , posExists, getFrom2D, getFromState} from "./imports.js";
 
 export type LIndex = number
@@ -19,24 +18,26 @@ For axes not mentioned, the whole axis is implied.*/
 export type Slice = Record<LIndex,number[]>
 
 type Arrive = {
-  type:"arrive",
-  move:Move,
-  idx:number // index of corresponding leave within axis
+   type:"arrive"
+  ,move:Move
+  ,board:Board2D
+  ,idx:number // index of corresponding leave within axis
 }
 export type AxisLoc = {
   type:"physical",
-  move:Move
+  move:Move,
+  board:Board2D
 } | Arrive | {
   type:"leave",
-  source:Coords
+  source:Coords,
+  board:Board2D
 } | {
   type:"pass",
   lt:[number,number]|null
 }
 
 export function* search(state : GameState) : Iterable<Move[]> {
-  let wholeHC = buildHC(state)
-  let hcs:HC[] = [wholeHC]
+  let [wholeHC,hcs] = buildHCs(state)
   let sgn = getNewL(state)>0?1:-1
   while(hcs.length){
     let hc = hcs.pop()
@@ -66,7 +67,7 @@ export function toAction(p:Record<LIndex,[number,AxisLoc]>,sgn:number): Move[] {
   return res
 }
 
-export function buildHC(state : GameState) : HC {
+export function buildHCs(state : GameState) : [HC, HC[]] {
   let nonBranches : Record<number,AxisLoc[]> = {}
   let arrivals : AxisLoc[] = [{type:"pass",lt:null}]
   for (let l of getPlayableTimelines(state)){
@@ -79,16 +80,17 @@ export function buildHC(state : GameState) : HC {
       // Assume that movesFrom returns moves by each piece in turn
       let s = getStart(mv)
       let e = getEnd(mv)
+      let nbs = getNewBoards(mv)
       if(lt(e)==lt(s)){
-        nonBranches[l].push({type:"physical",move:mv})
+        nonBranches[l].push({type:"physical",move:mv,board:nbs[s[0]]})
         continue;
       }
       if (s!=lastLeave){
-        nonBranches[l].push({type:"leave",source:s})
+        nonBranches[l].push({type:"leave",source:s,board:nbs[s[0]]})
         lastLeaveIdx = nonBranches[l].length-1
       }
       arrivals.push(
-        {type:"arrive",move:mv,idx:lastLeaveIdx}
+        {type:"arrive",move:mv,board:nbs[e[0]],idx:lastLeaveIdx}
       )
       if(nonBranches[e[0]] && getEndT(state,l)==e[1] ){ // isPlayable(state,lt(e))){
         nonBranches[e[0]].push(arrivals[arrivals.length-1])
@@ -103,12 +105,31 @@ export function buildHC(state : GameState) : HC {
         break;
       }
   let axes = nonBranches
-  let l = getNewL(state)
-  for(let i=0;i<maxBranches;i++){
-    axes[l] = arrivals.slice(0);
-    l+=l>0?1:-1
+  let newL = getNewL(state)
+  let hcs = []
+  // We now split into maxBranches+1 hypercuboids to ensure that
+  // we don't consider actions where there is an uncreated timeline closer to
+  // the center than some created timeline
+  //
+  // alternative: split into ceil((maxBranches+1)/2) hcs where some of the axes have both moves and passes
+  //TODO: confirm that sharing references doesn't break things
+  //(there may be parts that could be sped up by not sharing references)
+  let newArrs = arrivals.slice(1)
+  for(let numActive=maxBranches;numActive>=0;numActive--){
+    let l = newL
+    let cur = Object.assign({},axes)
+    for(let i=0; i<maxBranches; i++){
+      axes[l] = (i>=numActive)?[arrivals[0]]:newArrs;
+      l += newL>0?1:-1
+    }
+    hcs.push(cur)
   }
-  return axes
+  let l = newL
+  for(let i=0;i<maxBranches;i++){
+    axes[l] = arrivals;
+    l+=newL>0?1:-1
+  }
+  return [axes,hcs]
 }
 
 /*
@@ -127,11 +148,17 @@ export function jumpOrderConsistent(state:GameState, p:Point, hc:HC):Slice|null{
   return null
 }
 export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{
+  let newL = getNewL(state)
+  let sgn = newL>0?1:-1
+  for(let l in hc){
+    if((+l)*sgn>=newL*sgn){
+    }
+  }
   return null
 }
 export function findChecks(state:GameState, p:Point, hc:HC):Slice|null{
   //We could use a bit of mutability here and undo before returning
-  //let check withMoves(state, toAc ,getCheckPath)
+  //let check = withMoves(state, toAction(p,getNewL(state)>0?1:-1) ,getCheckPath)
   let changedState = applyPoint(state,p)
   let check = getCheckPath(changedState)
   if(check){
@@ -143,8 +170,9 @@ export function findChecks(state:GameState, p:Point, hc:HC):Slice|null{
         let row = hc[pos[0]]
         for (let ix in row){
           let loc = row[ix]
-          if(loc.board)
-          if (loc.board && getFrom2D(loc.board, [pos[2],pos[3]] )==piece) result[pos[0]].push(+ix)
+          if(loc.type!="pass")
+            if (getFrom2D(loc.board, [pos[2],pos[3]])==piece)
+              result[pos[0]].push(+ix);
         }
       }
     }
@@ -156,8 +184,6 @@ export function applyPoint(state:GameState, p:Point) : GameState{
   return applyMoves(state, toAction(p,sgn))
 }
 
-//findMatching<Node extends (string | number | symbol) ,Edge>
-// (g:Graph<Node,Edge>, include:Node[]):null|Edge[]{
 export function takePoint(hc:HC):Record<LIndex,[number,AxisLoc]> | null{
   let sameboard : Record<LIndex,[number,AxisLoc]> = {}
   let graph : Graph<LIndex,[number,AxisLoc]> = {}

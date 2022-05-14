@@ -6,13 +6,18 @@ export type Move = {
   start : Coords,
   end : Coords,
   changed : Coords[],
-  newBoards : Record<number,Board2D>[]
+  newBoards : Record<number,Board2D> // for branching moves, the board on the
+  // new timeline should be associated with the l-index of end even though
+  // the board would not get added to that timeline
 }
 export function getStart(mv:Move):Coords {
   return mv.start
 }
 export function getEnd(mv:Move):Coords{
   return mv.end
+}
+export function getNewBoards(mv:Move):Record<number,Board2D>{
+  return mv.newBoards
 }
 
 export type GameState = object
