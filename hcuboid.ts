@@ -162,7 +162,12 @@ export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{ // Assu
   let minT = Infinity
   let minTl = undefined
   for (let l = sgn*Math.max(sgn*minL,-active); sgn*l < Math.min(sgn*maxL,active); l+=sgn*TSp) {
-    let t = getEndT(state, l)
+    let t : number
+    if (sgn*l>=sgn*newL){
+      let lt = getLTFromLoc(p[l][1])
+      t = lt == null ? Infinity:lt[1]
+    }
+    else t = getEndT(state, l)
     if (l in p && p[l][1].type!="pass"){
       t+=1
     }
@@ -171,7 +176,7 @@ export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{ // Assu
       minTl = l
     }
   }
-  if (minTl in p && p[minTl][1].type=="pass"){
+  if (minTl in p && p[minTl][1].type=="pass"){ // The given action does not move the present to the opponent
     if (minTl*sgn>=newL*sgn) throw "The definition of maxl should exclude minTl being a pass and a new branch"
     // return a slice saying that minTl can't be pass if it is active and
     let result = {}
@@ -190,7 +195,9 @@ export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{ // Assu
     }
     return result
   }
-  return null
+  else{// The given action does move the present to the opponent
+    return null
+  }
 }
 function doesNotMoveT(loc:AxisLoc,minT:number){
   return loc.type=="pass" || getLTFromLoc(loc)[1]>=minT;
