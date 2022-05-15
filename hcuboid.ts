@@ -4,9 +4,12 @@ import {GameState, Move, Coords, Board2D
   , movesFrom
   , getEndT
   , getNewL
+  , getOpL
   , getEnd, getStart, getNewBoards
   , posExists, getFrom2D, getFromState} from "./imports.js";
 
+
+const TSp = 1; // timeline spacing
 export type LIndex = number
 
 export type HC = Record<LIndex,Record<number,AxisLoc>>
@@ -127,7 +130,7 @@ export function buildHCs(state : GameState) : [HC, HC[]] {
   let l = newL
   for(let i=0;i<maxBranches;i++){
     axes[l] = arrivals;
-    l+=newL>0?1:-1
+    l+=newL>0?TSp:-TSp
   }
   return [axes,hcs]
 }
@@ -147,14 +150,50 @@ export function findProblem(state:GameState, p:Point, hc:HC):Slice|null{
 export function jumpOrderConsistent(state:GameState, p:Point, hc:HC):Slice|null{
   return null
 }
-export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{
-  let newL = getNewL(state)
-  let sgn = newL>0?1:-1
-  for(let l in hc){
-    if((+l)*sgn>=newL*sgn){
+export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{ // Assumes that T is numbered by half-turn
+  const newL = getNewL(state)
+  const sgn = newL>0?1:-1
+
+  // the L-index of the timeline most recently created by the opponent
+  const minL = getOpL(state)
+  // the L-index timeline most recently created by the player
+  const maxL = sgn*Math.max(sgn*(newL-sgn*TSp), ...Object.keys(p).filter(k=>p[k][1].type!="pass").map(l=>+l*sgn))
+  const active = Math.min(Math.abs(minL),Math.abs(maxL))+TSp
+  let minT = Infinity
+  let minTl = undefined
+  for (let l = sgn*Math.max(sgn*minL,-active); sgn*l < Math.min(sgn*maxL,active); l+=sgn*TSp) {
+    let t = getEndT(state, l)
+    if (l in p && p[l][1].type!="pass"){
+      t+=1
+    }
+    if (t<minT){
+      minT = t
+      minTl = l
     }
   }
+  if (minTl in p && p[minTl][1].type=="pass"){
+    if (minTl*sgn>=newL*sgn) throw "The definition of maxl should exclude minTl being a pass and a new branch"
+    // return a slice saying that minTl can't be pass if it is active and
+    let result = {}
+    result[minTl] = [p[minTl][0]]
+    // only remove points where minTl is active
+    if ( minTl*sgn < -newL*sgn ){
+      // minTl
+      let nonPassL = -minTl-sgn*TSp
+      result[nonPassL] = Object.keys(hc[nonPassL]).filter(ix => ix!="pass")
+    }
+    // Only remove points where there isn't an active branch further back
+    for (let l = newL; sgn*l < Math.abs(minL)+TSp; l+=sgn*TSp) {
+      if(!(l in hc)) break;
+      if (!(l in result)) result[l]=Object.keys(hc[l])
+      result[l]=result[l].filter((ix:number) => doesNotMoveT(hc[l][ix], minT ))
+    }
+    return result
+  }
   return null
+}
+function doesNotMoveT(loc:AxisLoc,minT:number){
+  return loc.type=="pass" || getLTFromLoc(loc)[1]>=minT;
 }
 export function findChecks(state:GameState, p:Point, hc:HC):Slice|null{
   //We could use a bit of mutability here and undo before returning

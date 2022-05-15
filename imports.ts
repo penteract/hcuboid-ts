@@ -29,6 +29,10 @@ export type GameState = object
 export function getNewL(gs:GameState):number{
   return 1
 }
+// Returns the l-index of the timeline most recently created by the opponent
+export function getOpL(gs:GameState):number{
+  return -1
+}
 // Returns the T-index of the last borad on a timeline
 export function getEndT(gs:GameState,l:number):number{
   return 0
