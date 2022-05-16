@@ -147,7 +147,60 @@ export function findProblem(state:GameState, p:Point, hc:HC):Slice|null{
   return jumpOrderConsistent(state,p,hc) || testPresent(state,p,hc) || findChecks(state,p,hc)
 }
 
+// test whether there's a branch to a pass or a pair of branches that are created in the wrong order (implying a jump to a board that hasn't yet been played on, which cannot create a branch)
 export function jumpOrderConsistent(state:GameState, p:Point, hc:HC):Slice|null{
+  let newL = getNewL(state)
+  let sgn = newL>0?1:-1
+  let jumpMap = {} // jumpMap["l1,t1"]==l2 means that p[l2] is a jump to the 2D board at [l1,t1]
+  for (let l=newL; l in p && p[l][1].type == "arrive"; l+=TSp*sgn){
+    let [_,branchLoc] = p[l]
+    if(branchLoc.type=="arrive") {// branch
+      let cloned = lt(getEnd(branchLoc.move))
+      let targetLoc : AxisLoc
+      /*if((end[0] in p) && ((targetLoc=p[end[0]][1]).type=="pass") && targetLoc.lt[1]==end[1] ){
+        //why doesn't that typecheck?
+      }*/
+      if((cloned[0] in p)){
+        let [n,targetLoc]=p[cloned[0]]
+        if( targetLoc.type=="pass" && targetLoc.lt[1]==cloned[1] ){
+          // branch involves moving to a pass. Ban any branches to the same place intersecting with a pass
+          let result = {}
+          result[cloned[0]]=[n]
+          result[l]=[]
+          for(let m in hc[l]){
+            let loc = hc[l][m]
+            if (loc.type=="arrive" && getEnd(loc.move).slice(0,2).every((e,ix) => e==cloned[ix])){
+              result[l].append(m)
+            }
+          }
+          return result
+        }
+      }
+      let source = lt(getStart(branchLoc.move))
+      if(source.toString() in jumpMap){
+        //some earlier branch jumped to the source of this one before that board had been played on
+        let result = {}
+        result[l] = [] ;
+        for(let n in hc[l]){
+          let loc = hc[l][n]
+          if (loc.type=="arrive"){
+            let nstart = getStart(loc.move)
+            if(source.every((e,ix)=>nstart[ix]==e)) result[l].push(n)
+          }
+        }
+        let prevBranch = jumpMap[source.toString()]
+        result[prevBranch] = [] ;
+        for(let n in hc[prevBranch]){
+          let loc = hc[prevBranch][n]
+          if (loc.type=="arrive"){
+            let nEnd = getEnd(loc.move)
+            if(source.every((e,ix)=>nEnd[ix]==e)) result[prevBranch].push(n)
+          }
+        }
+      }
+      jumpMap[cloned.toString()]=l
+    }
+  }
   return null
 }
 export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{ // Assumes that T is numbered by half-turn
