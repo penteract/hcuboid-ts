@@ -1,12 +1,12 @@
 import {GameState, Move, Coords, Board2D
-  , applyMoves, getCheckPath
+  , withMoves, getCheckPath
   , getPlayableTimelines
   , movesFrom
   , getEndT
   , getNewL
   , getOpL
   , getEnd, getStart, getNewBoards
-  , posExists, getFrom2D, getFromState} from "./imports.js";
+  , posExists, getFrom2D} from "./imports.js";
 
 
 const TSp = 1; // timeline spacing
@@ -84,18 +84,23 @@ export function buildHCs(state : GameState) : [HC, HC[]] {
       let s = getStart(mv)
       let e = getEnd(mv)
       let nbs = getNewBoards(mv)
-      if(lt(e)==lt(s)){
+      if(lt(e)+""==lt(s)+""){
         nonBranches[l].push({type:"physical",move:mv,board:nbs[s[0]]})
         continue;
       }
-      if (s!=lastLeave){
+      if (s+""!=lastLeave+""){
         nonBranches[l].push({type:"leave",source:s,board:nbs[s[0]]})
         lastLeaveIdx = nonBranches[l].length-1
+        lastLeave = s
+      }
+      let otherBoard = Object.keys(nbs).filter(x=>x!=s[0]+"")
+      if (otherBoard.length!=1){
+        throw "there should have been exactly 2 boards created"
       }
       arrivals.push(
-        {type:"arrive",move:mv,board:nbs[e[0]],idx:lastLeaveIdx}
+        {type:"arrive",move:mv,board:nbs[otherBoard[0]],idx:lastLeaveIdx}
       )
-      if(nonBranches[e[0]] && getEndT(state,l)==e[1] ){ // isPlayable(state,lt(e))){
+      if(nonBranches[e[0]] && getEndT(state,e[0])==e[1] ){ // isPlayable(state,lt(e))){
         nonBranches[e[0]].push(arrivals[arrivals.length-1])
       }
     }
@@ -107,7 +112,7 @@ export function buildHCs(state : GameState) : [HC, HC[]] {
         maxBranches+=1
         break;
       }
-  let axes = nonBranches
+  let axes : HC = nonBranches
   let newL = getNewL(state)
   let hcs = []
   // We now split into maxBranches+1 hypercuboids to ensure that
@@ -117,14 +122,15 @@ export function buildHCs(state : GameState) : [HC, HC[]] {
   // alternative: split into ceil((maxBranches+1)/2) hcs where some of the axes have both moves and passes
   //TODO: confirm that sharing references doesn't break things
   //(there may be parts that could be sped up by not sharing references)
-  let newArrs = arrivals.slice(1)
+  let newArrs = {}
+  for(let i=1;i<arrivals.length;i++) newArrs[i] = arrivals[i]
   for(let numActive=maxBranches;numActive>=0;numActive--){
     let l = newL
-    let cur = Object.assign({},axes)
     for(let i=0; i<maxBranches; i++){
       axes[l] = (i>=numActive)?[arrivals[0]]:newArrs;
       l += newL>0?1:-1
     }
+    let cur = Object.assign({},axes)
     hcs.push(cur)
   }
   let l = newL
@@ -156,10 +162,6 @@ export function jumpOrderConsistent(state:GameState, p:Point, hc:HC):Slice|null{
     let [_,branchLoc] = p[l]
     if(branchLoc.type=="arrive") {// branch
       let cloned = lt(getEnd(branchLoc.move))
-      let targetLoc : AxisLoc
-      /*if((end[0] in p) && ((targetLoc=p[end[0]][1]).type=="pass") && targetLoc.lt[1]==end[1] ){
-        //why doesn't that typecheck?
-      }*/
       if((cloned[0] in p)){
         let [n,targetLoc]=p[cloned[0]]
         if( targetLoc.type=="pass" && targetLoc.lt[1]==cloned[1] ){
@@ -169,8 +171,8 @@ export function jumpOrderConsistent(state:GameState, p:Point, hc:HC):Slice|null{
           result[l]=[]
           for(let m in hc[l]){
             let loc = hc[l][m]
-            if (loc.type=="arrive" && getEnd(loc.move).slice(0,2).every((e,ix) => e==cloned[ix])){
-              result[l].append(m)
+            if (loc.type=="arrive" && getEnd(loc.move).slice(0, 2).every((e, ix) => e==cloned[ix])){
+              result[l].push(m)
             }
           }
           return result
@@ -197,6 +199,7 @@ export function jumpOrderConsistent(state:GameState, p:Point, hc:HC):Slice|null{
             if(source.every((e,ix)=>nEnd[ix]==e)) result[prevBranch].push(n)
           }
         }
+        return result
       }
       jumpMap[cloned.toString()]=l
     }
@@ -214,7 +217,7 @@ export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{ // Assu
   const active = Math.min(Math.abs(minL),Math.abs(maxL))+TSp
   let minT = Infinity
   let minTl = undefined
-  for (let l = sgn*Math.max(sgn*minL,-active); sgn*l < Math.min(sgn*maxL,active); l+=sgn*TSp) {
+  for (let l = sgn*Math.max(sgn*minL,-active); sgn*l <= Math.min(sgn*maxL,active); l+=sgn*TSp) {
     let t : number
     if (sgn*l>=sgn*newL){
       let lt = getLTFromLoc(p[l][1])
@@ -257,31 +260,44 @@ function doesNotMoveT(loc:AxisLoc,minT:number){
 }
 export function findChecks(state:GameState, p:Point, hc:HC):Slice|null{
   //We could use a bit of mutability here and undo before returning
-  //let check = withMoves(state, toAction(p,getNewL(state)>0?1:-1) ,getCheckPath)
-  let changedState = applyPoint(state,p)
-  let check = getCheckPath(changedState)
+  let check = withMoves(state, toAction(p,getNewL(state)>0?1:-1) ,getCheckPath)
+  //let changedState = applyPoint(state,p)
+  //let check = getCheckPath(changedState)
   if(check){
     let result : Slice = {}
-    for(let pos of check){ // We rely on the fact that any path crosses each timeline at most once
+    for(let [pos,piece] of check){ // We rely on the fact that any path crosses each timeline at most once
       if(!posExists(state,pos)){// The position is added by some newly created board
-        let piece = getFromState(changedState,pos) // get the piece or space involved in the check
-        result[pos[0]]=[]
-        let row = hc[pos[0]]
-        for (let ix in row){
-          let loc = row[ix]
-          if(loc.type!="pass")
-            if (getFrom2D(loc.board, [pos[2],pos[3]])==piece)
-              result[pos[0]].push(+ix);
+        //let piece = getFromState(changedState,pos) // get the piece or space involved in the check
+        if(pos[0] in result){
+          let newRow = []
+          for(let ix of result[pos[0]]){
+            let loc=hc[pos[0]][ix]
+            if(loc.type!="pass" && getFrom2D(loc.board, [pos[2],pos[3]])==piece){
+              newRow.push(+ix)
+            }
+          }
+          result[pos[0]] = newRow
+        }
+        else{
+          result[pos[0]]=[]
+          let row = hc[pos[0]]
+          for (let ix in row){
+            let loc = row[ix]
+            if(loc.type!="pass")
+              if (getFrom2D(loc.board, [pos[2],pos[3]])==piece)
+                result[pos[0]].push(+ix);
+          }
         }
       }
     }
+    return result
   }
   else return null;
 }
-export function applyPoint(state:GameState, p:Point) : GameState{
+/*export function applyPoint(state:GameState, p:Point) : GameState{
   let sgn = getNewL(state)>0?1:-1
   return applyMoves(state, toAction(p,sgn))
-}
+}*/
 
 export function takePoint(hc:HC):Record<LIndex,[number,AxisLoc]> | null{
   let sameboard : Record<LIndex,[number,AxisLoc]> = {}
@@ -303,7 +319,8 @@ export function takePoint(hc:HC):Record<LIndex,[number,AxisLoc]> | null{
       let loc = hc[l][ix]
       if (loc.type=="arrive"){
         let srcL = getStart(loc.move)[0]
-        if(!graph[l][srcL]){
+        // I think that checking that hc[srcL][loc.idx] exists is done by 'sanity' in the Haskell code
+        if(hc[srcL][loc.idx] && !graph[l][srcL]){
           graph[l][srcL]=[+ix,loc]
           graph[srcL][l]=[loc.idx,hc[srcL][loc.idx]]
           // this assumes that the corresponding leave is actually part of the hypercuboid
@@ -399,7 +416,6 @@ export function findMatching<Node extends (string|number|symbol), Edge>
   }
   let mtch : Rec<Node,Node> = {}
   for(let n of include){// make sure the matching includes all of these by finding augmenting paths
-    //console.log(n)
     if (n in mtch) continue;
     let seen : Rec<Node,boolean> = {} //nodes seen at an odd distance from n (and n itself)
     seen[n]=true
@@ -408,7 +424,6 @@ export function findMatching<Node extends (string|number|symbol), Edge>
     let cur : Path<Node>[] = ms.map(m=>({pair:[n,m], next:null}))
     let augment = null
     find_augment: while(cur.length!=0){
-      //console.log("start",seen,cur)
       let next = []// next depth of bfs
       for(let p of cur){
         let u = p.pair[1]
@@ -431,7 +446,6 @@ export function findMatching<Node extends (string|number|symbol), Edge>
       }
       cur=next
     }
-    //console.log(n,"aug",augment.drop,sh(augment.path))
     if(augment===null){
       return null
     }
