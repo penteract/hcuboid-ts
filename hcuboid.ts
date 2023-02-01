@@ -244,7 +244,7 @@ export function testPresent(state:GameState, p:Point, hc:HC):Slice|null{ // Assu
       result[nonPassL] = Object.keys(hc[nonPassL]).filter(ix => ix!="pass")
     }
     // Only remove points where there isn't an active branch further back
-    for (let l = newL; sgn*l < Math.abs(minL)+TSp; l+=sgn*TSp) {
+    for (let l = newL; sgn*l <= Math.abs(minL)+TSp; l+=sgn*TSp) {
       if(!(l in hc)) break;
       if (!(l in result)) result[l]=Object.keys(hc[l])
       result[l]=result[l].filter((ix:number) => doesNotMoveT(hc[l][ix], minT ))
